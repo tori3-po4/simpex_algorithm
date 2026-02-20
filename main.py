@@ -3,17 +3,28 @@ import matplotlib.pyplot as plt
 from itertools import combinations
 
 
+def _get_device():
+    """利用可能な最適デバイスを返す (CUDA > MPS > CPU)"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 class Simplex():
-    def __init__(self, objective, constraints, maximize=True):
+    def __init__(self, objective, constraints, maximize=True, device=None):
         """
         Args:
             objective: 目的関数の係数ベクトル (n,)
             constraints: タプル (A, b)。A @ x <= b の形式。A は (m, n)、b は (m,)
             maximize: True なら最大化、False なら最小化
+            device: 使用デバイス。None なら自動検出
         """
-        self.c = objective.float()
-        self.A_orig = constraints[0].float()
-        self.b_orig = constraints[1].float()
+        self.device = device or _get_device()
+        self.c = objective.float().to(self.device)
+        self.A_orig = constraints[0].float().to(self.device)
+        self.b_orig = constraints[1].float().to(self.device)
         self.maximize = maximize
         self.n = self.c.shape[0]
 
@@ -22,8 +33,8 @@ class Simplex():
     def _convert_to_standard_form(self):
         """非負制約 x_i >= 0 を -x_i <= 0 として追加し、標準形に変換する"""
         n = self.n
-        self.A = torch.cat([self.A_orig, -torch.eye(n)], dim=0)
-        self.b = torch.cat([self.b_orig, torch.zeros(n)], dim=0)
+        self.A = torch.cat([self.A_orig, -torch.eye(n, device=self.device)], dim=0)
+        self.b = torch.cat([self.b_orig, torch.zeros(n, device=self.device)], dim=0)
         self.m = self.A.shape[0]
 
     def _find_all_vertices(self):
@@ -32,7 +43,7 @@ class Simplex():
 
         # m本の制約からn本を選ぶ全組み合わせを列挙
         combos = list(combinations(range(m), n))
-        idx = torch.tensor(combos, dtype=torch.long)  # (C, n)
+        idx = torch.tensor(combos, dtype=torch.long, device=self.device)  # (C, n)
 
         # バッチで連立方程式を構築: A_batch @ x = b_batch
         A_batch = self.A[idx]   # (C, n, n)
@@ -46,7 +57,7 @@ class Simplex():
         b_valid = b_batch[nonsingular]
 
         if A_valid.shape[0] == 0:
-            return torch.empty(0, n), []
+            return torch.empty(0, n, device=self.device), []
 
         # 正則な系を一括で解く
         vertices = torch.linalg.solve(A_valid, b_valid)  # (V, n)
@@ -149,7 +160,7 @@ class Simplex():
 
         adj = self._build_adjacency(active)
         opt_idx, path, obj_vals = self._greedy_search(vertices, adj)
-        verts = vertices.numpy()
+        verts = vertices.cpu().numpy()
 
         _, ax = plt.subplots(figsize=(10, 8))
 
@@ -250,6 +261,7 @@ if __name__ == "__main__":
     b = torch.tensor([12.0, 12.0, 8.0])
 
     solver = Simplex(c, (A, b), maximize=True)
+    print(f"Device: {solver.device}")
 
     opt_x, opt_val, all_vertices, search_path = solver.solve()
     print("=== 単体法（PyTorch バッチ処理 + 貪欲探索） ===")
