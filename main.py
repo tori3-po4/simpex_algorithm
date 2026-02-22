@@ -167,10 +167,9 @@ class Simplex():
         return opt_x, opt_val, path, pivot_log
 
     def solve(self):
-        """LPを解き、最適解・最適値・全頂点・探索パス・ピボットログを返す"""
+        """LPを解き、最適解・最適値・探索パス・ピボットログを返す"""
         opt_x, opt_val, path, pivot_log = self._simplex_method()
-        vertices = self._find_all_vertices()
-        return opt_x, opt_val, vertices, path, pivot_log
+        return opt_x, opt_val, path, pivot_log
 
     def solve_with_visualization(self):
         """2D問題を解き、実行可能領域・頂点・探索パスを可視化する"""
@@ -194,7 +193,7 @@ class Simplex():
         centroid = verts.mean(axis=0)
         angles = np.arctan2(verts[:, 1] - centroid[1], verts[:, 0] - centroid[0])
         order = np.argsort(angles)
-        polygon = plt.Polygon(verts[order], alpha=0.2, color="cyan", label="実行可能領域")
+        polygon = plt.Polygon(verts[order], alpha=0.2, color="cyan", label="Feasible Region")
         ax.add_patch(polygon)
 
         # --- 制約直線の描画 ---
@@ -209,18 +208,18 @@ class Simplex():
                 y_line = (bi - a1 * x_line) / a2
                 mask = (y_line >= -0.5) & (y_line <= y_max)
                 ax.plot(x_line[mask], y_line[mask], "--", alpha=0.5,
-                        label=f"{a1:.0f}x\u2081 + {a2:.0f}x\u2082 \u2264 {bi:.0f}")
+                        label=f"{a1:.0f}x1 + {a2:.0f}x2 <= {bi:.0f}")
             else:
                 x_val = bi / a1
                 ax.axvline(x_val, linestyle="--", alpha=0.5,
-                           label=f"{a1:.0f}x\u2081 \u2264 {bi:.0f}")
+                           label=f"{a1:.0f}x1 <= {bi:.0f}")
 
         # 非負制約の軸
         ax.axhline(0, color="gray", linewidth=0.8)
         ax.axvline(0, color="gray", linewidth=0.8)
 
         # --- 全実行可能頂点 ---
-        ax.scatter(verts[:, 0], verts[:, 1], s=80, c="blue", zorder=5, label="実行可能頂点")
+        ax.scatter(verts[:, 0], verts[:, 1], s=80, c="blue", zorder=5, label="Feasible Vertices")
         for i, (x, y) in enumerate(verts):
             ax.annotate(f"  ({x:.1f}, {y:.1f})\n  z={obj_vals[i]:.1f}",
                         (x, y), fontsize=8, zorder=6)
@@ -239,16 +238,16 @@ class Simplex():
             info = pivot_log[i]
             entering = self._var_name(info['entering'])
             leaving = self._var_name(info['leaving'])
-            label = f"step {i + 1}\n{entering} \u2194 {leaving}"
+            label = f"step {i + 1}\n{entering} <-> {leaving}"
 
             ax.text(mid_x, mid_y, label, fontsize=8, color="red",
                     ha="center", va="bottom", fontweight="bold", zorder=8)
 
         # 始点（原点）と最適解を強調
         ax.scatter(*path_np[0], s=200, c="orange", marker="s",
-                   zorder=9, label="開始点 (原点)")
+                   zorder=9, label="Start (Origin)")
         ax.scatter(*path_np[-1], s=200, c="red", marker="*",
-                   zorder=9, label=f"最適解 (z={opt_val:.1f})")
+                   zorder=9, label=f"Optimal (z={opt_val:.1f})")
 
         # --- 目的関数の等高線 ---
         c1, c2 = self.c.tolist()
@@ -261,10 +260,10 @@ class Simplex():
 
         ax.set_xlim(-0.5, x_max)
         ax.set_ylim(-0.5, y_max)
-        ax.set_xlabel("x\u2081", fontsize=12)
-        ax.set_ylabel("x\u2082", fontsize=12)
-        mode = "最大化" if self.maximize else "最小化"
-        ax.set_title(f"単体法（被約費用） \u2014 {mode} z = {c1:.0f}x\u2081 + {c2:.0f}x\u2082",
+        ax.set_xlabel("x1", fontsize=12)
+        ax.set_ylabel("x2", fontsize=12)
+        mode = "Maximize" if self.maximize else "Minimize"
+        ax.set_title(f"Simplex Method (Reduced Cost) — {mode} z = {c1:.0f}x1 + {c2:.0f}x2",
                      fontsize=14)
         ax.legend(loc="upper right", fontsize=9)
         ax.grid(True, alpha=0.3)
@@ -293,7 +292,7 @@ if __name__ == "__main__":
     solver = Simplex(c, (A, b), maximize=True)
     print(f"Device: {solver.device}")
 
-    opt_x, opt_val, all_vertices, path, pivot_log = solver.solve()
+    opt_x, opt_val, path, pivot_log = solver.solve()
 
     print("=== 単体法（被約費用） ===")
     print()
@@ -320,7 +319,6 @@ if __name__ == "__main__":
     print(f"最適解:   x = ({opt_x[0].item():.2f}, {opt_x[1].item():.2f})")
     print(f"最適値:   z = {opt_val}")
     print(f"反復回数: {len(pivot_log) - 1}")
-    print(f"全実行可能頂点:\n{all_vertices}")
     print(f"探索パス: {[f'({p[0].item():.1f}, {p[1].item():.1f})' for p in path]}")
     print()
 
