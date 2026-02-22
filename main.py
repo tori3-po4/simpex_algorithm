@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from itertools import combinations
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 
 class Simplex:
@@ -48,7 +49,8 @@ class Simplex:
             # 最小比テスト（出基底変数）
             col = tab[1:, pivot_col]
             rhs = tab[1:, -1]
-            ratios = np.where(col > 1e-10, rhs / col, np.inf)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                ratios = np.where(col > 1e-10, rhs / col, np.inf)
             pivot_row = ratios.argmin()
 
             if ratios[pivot_row] == np.inf:
@@ -75,10 +77,15 @@ class Simplex:
         return opt_x, opt_val, path
 
     def solve_with_visualization(self):
-        """2D問題を解き、実行可能領域・頂点・探索パスを可視化する"""
-        if self.n != 2:
-            raise ValueError("可視化は2次元問題のみ対応しています")
+        """2D/3D問題を解き、実行可能領域・頂点・探索パスを可視化する"""
+        if self.n == 2:
+            return self._visualize_2d()
+        if self.n == 3:
+            return self._visualize_3d()
+        raise ValueError("可視化は2次元または3次元問題のみ対応しています")
 
+    def _visualize_2d(self):
+        """2D可視化"""
         opt_x, opt_val, path = self.solve()
         vertices = self._find_all_vertices()
 
@@ -161,6 +168,100 @@ class Simplex:
 
         return opt_x, opt_val
 
+    def _visualize_3d(self):
+        """3D可視化"""
+        opt_x, opt_val, path = self.solve()
+        vertices = self._find_all_vertices()
+
+        if len(vertices) == 0:
+            raise ValueError("実行可能解が存在しません")
+
+        verts = np.array(vertices)
+        path_np = np.array(path)
+        obj_vals = verts @ self.c
+
+        fig = plt.figure(figsize=(12, 9))
+        ax = fig.add_subplot(111, projection="3d")
+
+        # --- Feasible Region (polyhedron faces) ---
+        faces = self._get_polyhedron_faces(verts)
+        poly = Poly3DCollection(faces, alpha=0.15, facecolor="cyan", edgecolor="black",
+                                linewidth=1.0)
+        ax.add_collection3d(poly)
+
+        # --- Feasible Vertices ---
+        ax.scatter(verts[:, 0], verts[:, 1], verts[:, 2],
+                   s=60, c="blue", depthshade=False, label="Feasible Vertices")
+        for i, v in enumerate(verts):
+            ax.text(v[0], v[1], v[2],
+                    f"  ({v[0]:.1f},{v[1]:.1f},{v[2]:.1f}) z={obj_vals[i]:.1f}",
+                    fontsize=7)
+
+        # --- Simplex Path ---
+        ax.plot(path_np[:, 0], path_np[:, 1], path_np[:, 2],
+                "o-", color="red", linewidth=2.5, markersize=4, label="Simplex Path")
+        for i in range(len(path_np) - 1):
+            mid = (path_np[i] + path_np[i + 1]) / 2
+            ax.text(mid[0], mid[1], mid[2], f" step {i + 1}",
+                    fontsize=8, color="red", fontweight="bold")
+
+        # --- Start / Optimal ---
+        ax.scatter(*path_np[0], s=200, c="orange", marker="s",
+                   depthshade=False, label="Start (Origin)")
+        ax.scatter(*path_np[-1], s=200, c="red", marker="*",
+                   depthshade=False, label=f"Optimal (z={opt_val:.1f})")
+
+        ax.set_xlabel("x1", fontsize=12)
+        ax.set_ylabel("x2", fontsize=12)
+        ax.set_zlabel("x3", fontsize=12)
+        mode = "Maximize" if self.maximize else "Minimize"
+        c1, c2, c3 = self.c
+        ax.set_title(
+            f"Simplex Method (Reduced Cost) -- {mode} z = {c1:.0f}x1 + {c2:.0f}x2 + {c3:.0f}x3",
+            fontsize=13)
+        ax.legend(loc="upper left", fontsize=9)
+        plt.tight_layout()
+        plt.show()
+
+        return opt_x, opt_val
+
+    def _get_polyhedron_faces(self, verts):
+        """各制約の境界上にある頂点をグループ化して多面体の面を返す"""
+        n = self.n
+        A_full = np.vstack([self.A, -np.eye(n)])
+        b_full = np.concatenate([self.b, np.zeros(n)])
+
+        faces = []
+        for i in range(A_full.shape[0]):
+            normal = A_full[i]
+            residuals = A_full[i] @ verts.T - b_full[i]
+            on_face = np.where(np.abs(residuals) < 1e-6)[0]
+            if len(on_face) < 3:
+                continue
+
+            face_verts = verts[on_face]
+            centroid = face_verts.mean(axis=0)
+
+            # 法線に直交する局所2D座標系を構築
+            u = face_verts[0] - centroid
+            u_norm = np.linalg.norm(u)
+            if u_norm < 1e-10:
+                continue
+            u = u / u_norm
+            v = np.cross(normal, u)
+            v_norm = np.linalg.norm(v)
+            if v_norm < 1e-10:
+                continue
+            v = v / v_norm
+
+            # 局所座標での角度でソート
+            diffs = face_verts - centroid
+            angles = np.arctan2(diffs @ v, diffs @ u)
+            order = np.argsort(angles)
+            faces.append(face_verts[order])
+
+        return faces
+
     def _find_all_vertices(self):
         """可視化用: 全実行可能頂点を逐次的に求める"""
         n = self.n
@@ -183,22 +284,42 @@ class Simplex:
 
 
 if __name__ == "__main__":
+    # --- 2D ---
     # maximize 3x1 + 5x2
     # subject to:
     #   x1 + 2x2 <= 12
     #   2x1 + x2 <= 12
     #   x1 + x2  <= 8
     #   x1, x2   >= 0
-    c = np.array([3.0, 5.0])
-    A = np.array([[1.0, 2.0], [2.0, 1.0], [1.0, 1.0]])
-    b = np.array([12.0, 12.0, 8.0])
+    c2d = np.array([3.0, 5.0])
+    A2d = np.array([[1.0, 2.0], [2.0, 1.0], [1.0, 1.0]])
+    b2d = np.array([12.0, 12.0, 8.0])
 
-    solver = Simplex(c, (A, b), maximize=True)
-
-    opt_x, opt_val, path = solver.solve()
+    solver2d = Simplex(c2d, (A2d, b2d), maximize=True)
+    opt_x, opt_val, path = solver2d.solve()
+    print("=== 2D ===")
     print(f"最適解: x = {opt_x.tolist()}")
     print(f"最適値: z = {opt_val}")
     print(f"探索パス: {[p.tolist() for p in path]}")
     print()
+    solver2d.solve_with_visualization()
 
-    solver.solve_with_visualization()
+    # --- 3D ---
+    # maximize 2x1 + 3x2 + 4x3
+    # subject to:
+    #   x1 + x2 + x3  <= 10
+    #   x1 + 2x2      <= 12
+    #        x2 + 2x3 <= 12
+    #   x1, x2, x3    >= 0
+    c3d = np.array([2.0, 3.0, 4.0])
+    A3d = np.array([[1.0, 1.0, 1.0], [1.0, 2.0, 0.0], [0.0, 1.0, 2.0]])
+    b3d = np.array([10.0, 12.0, 12.0])
+
+    solver3d = Simplex(c3d, (A3d, b3d), maximize=True)
+    opt_x, opt_val, path = solver3d.solve()
+    print("=== 3D ===")
+    print(f"最適解: x = {opt_x.tolist()}")
+    print(f"最適値: z = {opt_val}")
+    print(f"探索パス: {[p.tolist() for p in path]}")
+    print()
+    solver3d.solve_with_visualization()
